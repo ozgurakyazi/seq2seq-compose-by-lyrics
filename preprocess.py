@@ -2,40 +2,93 @@ from music21 import *
 import glob
 import ipdb
 
-def get_data_from_dir(dir):
+def get_data_from_dir(dir, sents=True):
     all_lyrics = []
     all_notes = []
     for file in glob.glob(f"{dir}/*.mid"):
-        lyrics, notes = parse_file(file)
-        if not lyrics or not notes:
-            ipdb.set_trace()
+        print(f"Working on {file}")
+        if sents:
+            lyrics, notes = parse_single_sentences(file)
+            if not lyrics or not notes:
+                ipdb.set_trace()
+            else:
+                all_lyrics.extend(lyrics)
+                all_notes.extend(notes)
         else:
-            all_lyrics.append(lyrics)
-            all_notes.append(notes)
+            lyrics, notes = parse_whole_lyrics(file)
+            if not lyrics or not notes:
+                ipdb.set_trace()
+            else:
+                all_lyrics.append(lyrics)
+                all_notes.append(notes)
     return all_lyrics, all_notes
 
-def parse_file(file):
-    print(f"For file {file} extracted:")
-    song = converter.parse(file)
+def get_notes_from_stream(s):
     notes = []
-    parts = instrument.partitionByInstrument(song)
-
-    notes_to_parse = song.flat.notes
+    notes_to_parse = s.flat.notes
     for element in notes_to_parse:
         if isinstance(element, note.Note):
             notes.append(str(element.pitch))
         elif isinstance(element, chord.Chord):
             notes.append('.'.join(str(n) for n in element.normalOrder))
-    # Extract lyrics
+    return notes
+
+def parse_whole_lyrics(file, all_instruments=False):
     m = midi.MidiFile()
     m.open(file)
     m.read()
     for track in m.tracks:
         lyrics = [ev.data for ev in track.events if ev.type=="LYRIC"]
+        if not all_instruments:
+            temp_stream = midi.translate.midiTrackToStream(track)
+            notes = get_notes_from_stream(temp_stream)
         if len(lyrics) > 0:
             break
-    print(f"Text: {lyrics}")
-    print(f"Notes: {notes}")
+    if all_instruments:
+        song = converter.parse(file)
+        notes = []
+        notes_to_parse = song.flat.notes
+        for element in notes_to_parse:
+            if isinstance(element, note.Note):
+                notes.append(str(element.pitch))
+            elif isinstance(element, chord.Chord):
+                notes.append('.'.join(str(n) for n in element.normalOrder))
+
+    return lyrics, notes
+
+def parse_single_sentences(file):
+    lyrics = []
+    notes = []
+    m = midi.MidiFile()
+    m.open(file)
+    m.read()
+    for track in m.tracks:
+        if "LYRIC" in [ev.type for ev in track.events]:
+            start = midi.translate.getStartEvents()
+            end = midi.translate.getEndEvents()
+            current_events = []
+            current_lyrics = []
+            for ev in track.events:
+                if ev.type == "LYRIC":
+                    if ev.data == b"\r":
+                        try:
+                            temp_track = midi.MidiTrack(1)
+                            temp_track.events = start+current_events+end
+                            temp_stream = midi.translate.midiTrackToStream(temp_track)
+                            current_notes = get_notes_from_stream(temp_stream)
+                            lyrics.append("".join([i.decode("utf-8") for i in current_lyrics]).strip().split())
+                            current_lyrics = []
+                            notes.append(current_notes)
+                            current_notes = []
+                        except Exception as e:
+                            print(f"Could not add {current_lyrics}")
+                            current_lyrics = []
+                            current_notes = []
+                    else:
+                        current_lyrics.append(ev.data)
+                else:
+                    current_events.append(ev)
+
     return lyrics, notes
 
 def notes_to_midi(notes_list, output):
@@ -65,6 +118,26 @@ def notes_to_midi(notes_list, output):
     midi_stream = stream.Stream(output_notes)
     midi_stream.write('midi', fp=f'output/{output}.mid')
 
+
 def play_midi(midi_file):
     song = converter.parse(midi_file)
     song.show("midi")
+
+def generate_dict(x, start_index=2):
+    s = set([item for sublist in x for item in sublist])
+    return {e:i+start_index for i,e in enumerate(s)}
+
+def lookup(sent, vocab):
+    return [vocab[i] for i in sent if i in vocab]
+"""
+from preprocess import *
+x, y = get_data_from_dir("test_midi_small/")
+
+vocab_words = generate_dict(x)
+vocab_notes = generate_dict(y)
+
+vocab_all = generate_dict(x+y)
+
+x_transformed = [lookup(i,vocab_all) for i in x if i]
+y_transformed = [lookup(i,vocab_all) for i in y if i]
+"""
