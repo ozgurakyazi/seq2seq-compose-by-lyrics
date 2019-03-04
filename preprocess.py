@@ -1,6 +1,7 @@
 from music21 import *
 import glob
 import ipdb
+import numpy as np
 
 def get_data_from_dir(dir, sents=True):
     all_lyrics = []
@@ -10,14 +11,14 @@ def get_data_from_dir(dir, sents=True):
         if sents:
             lyrics, notes = parse_single_sentences(file)
             if not lyrics or not notes:
-                ipdb.set_trace()
+                print(f"No lyrics in {file}")
             else:
                 all_lyrics.extend(lyrics)
                 all_notes.extend(notes)
         else:
             lyrics, notes = parse_whole_lyrics(file)
             if not lyrics or not notes:
-                ipdb.set_trace()
+                print(f"No lyrics in {file}")
             else:
                 all_lyrics.append(lyrics)
                 all_notes.append(notes)
@@ -55,7 +56,11 @@ def parse_whole_lyrics(file, all_instruments=False):
                 notes.append('.'.join(str(n) for n in element.normalOrder))
 
     return lyrics, notes
-
+def clean_word(word):
+    rmv = [",","."]
+    for c in rmv:
+        word = word.replace(c,"")
+    return word
 def parse_single_sentences(file):
     lyrics = []
     notes = []
@@ -76,11 +81,15 @@ def parse_single_sentences(file):
                             temp_track.events = start+current_events+end
                             temp_stream = midi.translate.midiTrackToStream(temp_track)
                             current_notes = get_notes_from_stream(temp_stream)
-                            lyrics.append("".join([i.decode("utf-8") for i in current_lyrics]).strip().split())
+                            if len(current_notes) <= 100 and len(current_notes) > 0:
+                                lyrics.append("".join([clean_word(i.decode("utf-8").lower()) for i in current_lyrics]).strip().split())
+                                notes.append(current_notes)
+                            else:
+                                print(f"Not adding {current_notes} and {current_lyrics}")
                             current_lyrics = []
-                            notes.append(current_notes)
                             current_notes = []
                         except Exception as e:
+                            print(e)
                             print(f"Could not add {current_lyrics}")
                             current_lyrics = []
                             current_notes = []
@@ -129,6 +138,42 @@ def generate_dict(x, start_index=2):
 
 def lookup(sent, vocab):
     return [vocab[i] for i in sent if i in vocab]
+
+
+def batch(inputs, max_sequence_length=None):
+    """
+    Args:
+        inputs:
+            list of sentences (integer lists)
+        max_sequence_length:
+            integer specifying how large should `max_time` dimension be.
+            If None, maximum sequence length would be used
+
+    Outputs:
+        inputs_time_major:
+            input sentences transformed into time-major matrix
+            (shape [max_time, batch_size]) padded with 0s
+        sequence_lengths:
+            batch-sized list of integers specifying amount of active
+            time steps in each input sequence
+    """
+
+    sequence_lengths = [len(seq) for seq in inputs]
+    batch_size = len(inputs)
+
+    if max_sequence_length is None:
+        max_sequence_length = max(sequence_lengths)
+
+    inputs_batch_major = np.zeros(shape=[batch_size, max_sequence_length], dtype=np.int32) # == PAD
+
+    for i, seq in enumerate(inputs):
+        for j, element in enumerate(seq):
+            inputs_batch_major[i, j] = element
+
+    # [batch_size, max_time] -> [max_time, batch_size]
+    inputs_time_major = inputs_batch_major.swapaxes(0, 1)
+
+    return inputs_time_major, sequence_lengths
 """
 from preprocess import *
 x, y = get_data_from_dir("test_midi_small/")
