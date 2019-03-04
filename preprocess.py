@@ -140,7 +140,7 @@ def lookup(sent, vocab):
     return [vocab[i] for i in sent if i in vocab]
 
 
-def batch(inputs, max_sequence_length=None):
+def produce_batch(inputs, max_sequence_length=None):
     """
     Args:
         inputs:
