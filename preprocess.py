@@ -2,13 +2,16 @@ from music21 import *
 import glob
 import ipdb
 import numpy as np
+import spacy
+import re
+spacy_nlp = spacy.load('en')
 
-def get_data_from_dir(dir, sents=True):
+def get_data_from_dir(dir, single_sents=True):
     all_lyrics = []
     all_notes = []
     for file in glob.glob(f"{dir}/*.mid"):
         print(f"Working on {file}")
-        if sents:
+        if single_sents:
             lyrics, notes = parse_single_sentences(file)
             if not lyrics or not notes:
                 print(f"No lyrics in {file}")
@@ -56,11 +59,13 @@ def parse_whole_lyrics(file, all_instruments=False):
                 notes.append('.'.join(str(n) for n in element.normalOrder))
 
     return lyrics, notes
+
 def clean_word(word):
     rmv = [",","."]
     for c in rmv:
         word = word.replace(c,"")
     return word
+
 def parse_single_sentences(file):
     lyrics = []
     notes = []
@@ -82,17 +87,17 @@ def parse_single_sentences(file):
                             temp_stream = midi.translate.midiTrackToStream(temp_track)
                             current_notes = get_notes_from_stream(temp_stream)
                             if len(current_notes) <= 100 and len(current_notes) > 0:
-                                lyrics.append("".join([clean_word(i.decode("utf-8").lower()) for i in current_lyrics]).strip().split())
+                                lyrics.append(preprocessing_pipeline(current_lyrics))
                                 notes.append(current_notes)
                             else:
                                 print(f"Not adding {current_notes} and {current_lyrics}")
                             current_lyrics = []
-                            current_notes = []
+                            current_events = []
                         except Exception as e:
                             print(e)
                             print(f"Could not add {current_lyrics}")
                             current_lyrics = []
-                            current_notes = []
+                            current_events = []
                     else:
                         current_lyrics.append(ev.data)
                 else:
@@ -132,32 +137,11 @@ def play_midi(midi_file):
     song = converter.parse(midi_file)
     song.show("midi")
 
-def generate_dict(x, start_index=2):
-    s = set([item for sublist in x for item in sublist])
-    return {e:i+start_index for i,e in enumerate(s)}
-
 def lookup(sent, vocab):
     return [vocab[i] for i in sent if i in vocab]
 
 
 def produce_batch(inputs, max_sequence_length=None):
-    """
-    Args:
-        inputs:
-            list of sentences (integer lists)
-        max_sequence_length:
-            integer specifying how large should `max_time` dimension be.
-            If None, maximum sequence length would be used
-
-    Outputs:
-        inputs_time_major:
-            input sentences transformed into time-major matrix
-            (shape [max_time, batch_size]) padded with 0s
-        sequence_lengths:
-            batch-sized list of integers specifying amount of active
-            time steps in each input sequence
-    """
-
     sequence_lengths = [len(seq) for seq in inputs]
     batch_size = len(inputs)
 
@@ -174,15 +158,35 @@ def produce_batch(inputs, max_sequence_length=None):
     inputs_time_major = inputs_batch_major.swapaxes(0, 1)
 
     return inputs_time_major, sequence_lengths
-"""
-from preprocess import *
-x, y = get_data_from_dir("test_midi_small/")
 
-vocab_words = generate_dict(x)
-vocab_notes = generate_dict(y)
+def preprocessing_pipeline(sentence, is_list=True):
+    if is_list:
+        data_string = "".join([decontracted(i.decode("utf-8").lower()) for i in sentence])
+    else:
+        data_string = decontracted(sentence.lower())
+    data_tokens = [token.lemma_ if not (token.lemma_ == "-PRON-" or token.pos_=="PUNCT") else token.text for token in spacy_nlp(data_string)]
+    return data_tokens
 
-vocab_all = generate_dict(x+y)
+def decontracted(sentence):
+    # PUNCT
+    sentence = re.sub(r"\{", "", sentence)
+    sentence = re.sub(r"\}", "", sentence)
+    sentence = re.sub(r"\[", "", sentence)
+    sentence = re.sub(r"\]", "", sentence)
+    sentence = re.sub(r"\(", "", sentence)
+    sentence = re.sub(r"\)", "", sentence)
+    sentence = re.sub(r"_", " ", sentence)
+    sentence = re.sub(r"\n", "", sentence)
+    sentence = re.sub(r",", "", sentence)
 
-x_transformed = [lookup(i,vocab_all) for i in x if i]
-y_transformed = [lookup(i,vocab_all) for i in y if i]
-"""
+    return sentence
+
+
+
+def prepare_prediction(lyrics, batch_size, data_dict):
+    mask = 0
+    while not len(lyrics) % batch_size == 0:
+        lyrics.append("<PAD>")
+        mask += 1
+    predict_input = [data_dict.transform_sentence(preprocessing_pipeline(i, False)) for i in lyrics]
+    return predict_input, mask
