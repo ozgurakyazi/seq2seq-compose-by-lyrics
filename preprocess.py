@@ -317,11 +317,11 @@ def prepare_prediction(lyrics, batch_size, data_dict):
 
     """
     mask = 0
-    while not len(lyrics) % batch_size == 0:
-        lyrics.append("<PAD>")
+    temp_lyrics = []
+    while not (len(lyrics)+len(temp_lyrics)) % batch_size == 0:
+        temp_lyrics.append("<PAD>")
         mask += 1
-    predict_input = [data_dict.transform_sentence(preprocessing_pipeline(i, False)) for i in lyrics]
-
+    predict_input = [data_dict.transform_sentence(preprocessing_pipeline(i, False)) for i in lyrics+temp_lyrics]
     return predict_input, mask
 
 def notes_to_midi(notes_list, output, randomize_offset=False):
